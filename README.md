@@ -111,3 +111,50 @@ After completing this project, you will understand how VPNs work at a technical 
 ## Lessons Learned
 
 - (blank)
+
+## How To Test The VPN
+
+After the deploy workflow completes successfully, download the `wireguard-client-config` artifact from the GitHub Actions run. Install the WireGuard client on the device you want to test with, then import the generated `.conf` file and activate the tunnel.
+
+### Basic Validation
+
+- Confirm the WireGuard client shows a recent handshake and transfer activity after connecting.
+- Visit `https://ifconfig.me` or `https://icanhazip.com` before connecting and note your public IP.
+- Connect to the VPN and check the same site again. The IP should now match your VPN droplet's public IP.
+- Browse a few websites or run `curl ifconfig.me` while connected to confirm traffic continues to route through the VPN.
+
+### DNS Leak Test
+
+- While connected to the VPN, open `https://dnsleaktest.com`.
+- Run a standard or extended test.
+- Confirm the reported DNS servers match the resolver configured in your WireGuard client profile and do not expose your local network or ISP DNS.
+
+### Server-Side Verification
+
+SSH to the server and run:
+
+```bash
+sudo wg show
+```
+
+You should see:
+
+- the client peer listed
+- a recent `latest handshake`
+- increasing transfer counters for `received` and `sent`
+
+You can also confirm IP forwarding is enabled:
+
+```bash
+sysctl net.ipv4.ip_forward
+```
+
+It should return `net.ipv4.ip_forward = 1`.
+
+### Recommended Real-World Test
+
+- Connect your laptop or phone to a different network such as a mobile hotspot or public Wi-Fi.
+- Turn on the WireGuard tunnel.
+- Confirm your public IP changes to the droplet IP.
+- Verify normal web browsing works.
+- Run `sudo wg show` on the server and confirm handshake and traffic counters increase while you use the connection.

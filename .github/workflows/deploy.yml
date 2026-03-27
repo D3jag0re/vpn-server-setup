@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TF_IN_AUTOMATION: "true"
+      ANSIBLE_HOST_KEY_CHECKING: "False"
 
     steps:
       - name: Checkout repository
