@@ -1,0 +1,31 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: common_update_cache
+
+- name: Upgrade installed packages
+  ansible.builtin.apt:
+    upgrade: dist
+  when: common_upgrade_packages
+
+- name: Install common server packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Configure timezone
+  community.general.timezone:
+    name: "{{ server_timezone }}"
+
+- name: Configure hostname
+  ansible.builtin.hostname:
+    name: "{{ server_hostname }}"
+
+- name: Enable unattended upgrades
+  ansible.builtin.service:
+    name: unattended-upgrades
+    enabled: true
+    state: started
+  when: common_enable_unattended_upgrades

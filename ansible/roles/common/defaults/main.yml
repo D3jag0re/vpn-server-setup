@@ -2,3 +2,11 @@
 common_update_cache: true
 common_upgrade_packages: true
 common_enable_unattended_upgrades: true
+common_packages:
+  - unattended-upgrades
+  - apt-listchanges
+  - curl
+  - vim
+  - ufw
+server_timezone: UTC
+server_hostname: vpn

@@ -8,11 +8,9 @@
   become: false
   run_once: true
 
-- name: Install WireGuard and firewall packages
+- name: Install WireGuard
   ansible.builtin.apt:
-    name:
-      - wireguard
-      - ufw
+    name: wireguard
     state: present
     update_cache: true
 
