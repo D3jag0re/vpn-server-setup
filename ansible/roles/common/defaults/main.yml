@@ -1,0 +1,4 @@
+---
+common_update_cache: true
+common_upgrade_packages: true
+common_enable_unattended_upgrades: true

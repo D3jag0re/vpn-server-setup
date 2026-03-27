@@ -1,0 +1,144 @@
+---
+- name: Ensure artifact directory exists on controller
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/artifacts"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Install WireGuard and firewall packages
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - ufw
+    state: present
+    update_cache: true
+
+- name: Ensure WireGuard key directory exists
+  ansible.builtin.file:
+    path: /etc/wireguard/keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check for existing server private key
+  ansible.builtin.stat:
+    path: /etc/wireguard/keys/server_private.key
+  register: wireguard_server_private_key_stat
+
+- name: Generate server private key if missing
+  ansible.builtin.command: wg genkey
+  register: wireguard_server_private_key_cmd
+  changed_when: true
+  when: not wireguard_server_private_key_stat.stat.exists
+
+- name: Persist server private key
+  ansible.builtin.copy:
+    dest: /etc/wireguard/keys/server_private.key
+    content: "{{ wireguard_server_private_key_cmd.stdout }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not wireguard_server_private_key_stat.stat.exists
+
+- name: Read server private key
+  ansible.builtin.slurp:
+    src: /etc/wireguard/keys/server_private.key
+  register: wireguard_server_private_key_raw
+
+- name: Generate server public key
+  ansible.builtin.shell: "cat /etc/wireguard/keys/server_private.key | wg pubkey"
+  register: wireguard_server_public_key_cmd
+  changed_when: false
+
+- name: Check for existing client private key
+  ansible.builtin.stat:
+    path: "/etc/wireguard/keys/{{ wireguard_client_name }}_private.key"
+  register: wireguard_client_private_key_stat
+
+- name: Generate client private key if missing
+  ansible.builtin.command: wg genkey
+  register: wireguard_client_private_key_cmd
+  changed_when: true
+  when: not wireguard_client_private_key_stat.stat.exists
+
+- name: Persist client private key
+  ansible.builtin.copy:
+    dest: "/etc/wireguard/keys/{{ wireguard_client_name }}_private.key"
+    content: "{{ wireguard_client_private_key_cmd.stdout }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not wireguard_client_private_key_stat.stat.exists
+
+- name: Read client private key
+  ansible.builtin.slurp:
+    src: "/etc/wireguard/keys/{{ wireguard_client_name }}_private.key"
+  register: wireguard_client_private_key_raw
+
+- name: Generate client public key
+  ansible.builtin.shell: "cat /etc/wireguard/keys/{{ wireguard_client_name }}_private.key | wg pubkey"
+  register: wireguard_client_public_key_cmd
+  changed_when: false
+
+- name: Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Allow SSH through firewall
+  community.general.ufw:
+    rule: allow
+    name: OpenSSH
+
+- name: Allow WireGuard UDP port
+  community.general.ufw:
+    rule: allow
+    port: "{{ wireguard_port }}"
+    proto: udp
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+    policy: allow
+
+- name: Deploy WireGuard server config
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: "/etc/wireguard/{{ wireguard_interface }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    wireguard_server_private_key: "{{ wireguard_server_private_key_raw.content | b64decode | trim }}"
+    wireguard_client_public_key: "{{ wireguard_client_public_key_cmd.stdout | trim }}"
+  notify: Restart WireGuard
+
+- name: Ensure WireGuard service is enabled and running
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ wireguard_interface }}"
+    enabled: true
+    state: started
+
+- name: Deploy WireGuard client config on remote host
+  ansible.builtin.template:
+    src: client.conf.j2
+    dest: "/etc/wireguard/{{ wireguard_client_name }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    wireguard_client_private_key: "{{ wireguard_client_private_key_raw.content | b64decode | trim }}"
+    wireguard_server_public_key: "{{ wireguard_server_public_key_cmd.stdout | trim }}"
+
+- name: Fetch client configuration artifact
+  ansible.builtin.fetch:
+    src: "/etc/wireguard/{{ wireguard_client_name }}.conf"
+    dest: "{{ playbook_dir }}/artifacts/{{ wireguard_client_name }}.conf"
+    flat: true

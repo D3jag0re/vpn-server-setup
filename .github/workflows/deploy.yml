@@ -1,0 +1,115 @@
+name: Build > Deploy > Config > Verify
+
+on:
+  push:
+    branches:
+      - doom
+  workflow_dispatch: # Trigger manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+          ansible-galaxy collection install community.general ansible.posix
+
+      - name: Set backend credentials
+        run: |
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.DO_SPACES_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DO_SPACES_SECRET_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive
+        working-directory: ./terraform
+
+      - name: Terraform init
+        run: terraform init
+        working-directory: ./terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
+
+      - name: Terraform validate
+        run: terraform validate
+        working-directory: ./terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve -var "do_token=${{ secrets.DO_TOKEN }}" -var "public_key=${{ secrets.DO_SSH_PUBLIC_KEY }}"
+        working-directory: ./terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        run: |
+          terraform output -json droplet_info > droplet_info.json
+          echo "droplet_ip=$(jq -r '.ipv4' droplet_info.json)" >> "$GITHUB_OUTPUT"
+        working-directory: ./terraform
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p "$RUNNER_TEMP/.ssh"
+          printf '%s\n' "${{ secrets.DO_SSH_PRIVATE_KEY }}" > "$RUNNER_TEMP/.ssh/do_key"
+          chmod 600 "$RUNNER_TEMP/.ssh/do_key"
+
+      - name: Wait for SSH
+        run: |
+          for attempt in $(seq 1 30); do
+            if ssh -i "$RUNNER_TEMP/.ssh/do_key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@${{ steps.tf_outputs.outputs.droplet_ip }} "echo ready"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for SSH on ${{ steps.tf_outputs.outputs.droplet_ip }}" >&2
+          exit 1
+
+      - name: Write Ansible inventory
+        run: |
+          cat <<EOF > ansible/inventories/dev/hosts.yml
+          all:
+            hosts:
+              vpn:
+                ansible_host: ${{ steps.tf_outputs.outputs.droplet_ip }}
+                ansible_user: root
+                ansible_ssh_private_key_file: $RUNNER_TEMP/.ssh/do_key
+          EOF
+
+      - name: Ansible syntax check
+        run: ansible-playbook -i inventories/dev/hosts.yml site.yml --syntax-check
+        working-directory: ./ansible
+
+      - name: Configure WireGuard
+        run: ansible-playbook -i inventories/dev/hosts.yml site.yml
+        working-directory: ./ansible
+
+      - name: Verify WireGuard service
+        run: |
+          ssh -i "$RUNNER_TEMP/.ssh/do_key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${{ steps.tf_outputs.outputs.droplet_ip }} "systemctl is-active wg-quick@wg0 && sudo wg show && sysctl net.ipv4.ip_forward"
+
+      - name: Upload client config
+        uses: actions/upload-artifact@v4
+        with:
+          name: wireguard-client-config
+          path: ansible/artifacts/*.conf
