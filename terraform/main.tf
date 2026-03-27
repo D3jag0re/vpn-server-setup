@@ -18,7 +18,7 @@ resource "digitalocean_ssh_key" "dynamic_key" {
 # Create a new Web Droplet in the nyc2 region
 resource "digitalocean_droplet" "web" {
   image   = "ubuntu-22-04-x64"
-  name    = "web-lss"
+  name    = "web-vpnSS"
   region  = "nyc2"
   size    = "s-1vcpu-1gb"
   backups = true
