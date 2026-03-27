@@ -110,7 +110,7 @@ After completing this project, you will understand how VPNs work at a technical 
 
 ## Lessons Learned
 
-- (blank)
+- Ansible was failing SSH. My workflows bypassed host key checking but ansible did not. For simplicity, I added that as well to the ansible step. 
 
 ## How To Test The VPN
 
